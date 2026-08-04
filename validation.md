@@ -1,6 +1,6 @@
 # Validation Plan
 
-This document lays out specific operational scenarios that will be executed manually once the pipeline is implemented, to confirm it actually satisfies the [requirements](../README.md#Requirements) it was designed against — rather than assuming correctness from the architecture alone.
+This document lays out specific operational scenarios that will be executed manually once the pipeline is implemented, to confirm it actually satisfies the [requirements](../README.md##Requirements) it was designed against — rather than assuming correctness from the architecture alone.
 
 **Status: not yet executed.** This is a plan, not a report — each scenario below will be updated with actual observed results (including anything that *doesn't* work as expected) once the corresponding component exists and has been run for real.
 
