@@ -5,7 +5,7 @@ A streaming data pipeline that ingests live cryptocurrency trade data, computes 
 ## 📚 Additional Documentation
 
 - **[ADR.md](ADR.md)** — Architecture Decision Records documenting the reasoning and tradeoffs behind every major technology choice in this project.
-- **[docs/validation.md](docs/validation.md)** — Planned validation scenarios for confirming the pipeline actually meets its requirements (restart-safety, watermark behavior, ordering) once built.
+- **[validation.md](validation.md)** — Planned validation scenarios for confirming the pipeline actually meets its requirements (restart-safety, watermark behavior, ordering) once built.
 
 ## Why this project exists
 [stock-data-pipeline](https://github.com/devhongskim/stock-data-pipeline) processes one clean, complete daily snapshot, with the luxury of retries and full reprocessing whenever needed. This project answers the opposite problem: data never stops arriving, there's no "end of batch" to wait for, and a late or out-of-order event has to be handled *while the stream keeps moving*. Windowed aggregation, watermarking, and restart-safe checkpointing are the concepts this project exists to demonstrate — the deliberate other half of a complete data engineering skill set.
