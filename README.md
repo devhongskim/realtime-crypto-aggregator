@@ -126,6 +126,71 @@ No API key, no auth required for most channels — genuinely live trade data for
 - **Current**: single/small symbol set, `local[*]` Spark, single Kafka broker — appropriate for portfolio scale.
 - **At scale**: multiple Kafka partitions per symbol for parallelism; a real Spark cluster (EMR/Databricks) instead of local mode; Kafka Connect or a managed sink instead of hand-rolled `foreachBatch` writes.
 
+## 📦 How to Run (Phase 1 — Ingestion)
+
+Only ingestion is built so far (Kafka + producer) — Spark processing, Athena, and Grafana come in later phases.
+
+1. **Start Kafka** (KRaft mode, single broker, via Docker Compose):
+   ```bash
+   docker compose up -d
+   ```
+   This also auto-creates the `raw_trades` topic (3 partitions) via the `kafka-init` one-shot container.
+
+2. **Install producer dependencies**:
+   ```bash
+   cd producer
+   pip install -r requirements.txt
+   ```
+
+3. **Configure environment**:
+   ```bash
+   cp .env.example .env
+   ```
+   Default values work out of the box for local Kafka.
+
+4. **Run the producer**:
+   ```bash
+   python coinbase_producer.py
+   ```
+   It connects to Coinbase's public `market_trades` channel for `BTC-USD` and `ETH-USD`, and publishes each trade event onto the `raw_trades` Kafka topic, keyed by symbol.
+
+5. **Verify events are flowing** (from inside the Kafka container, or via any local Kafka CLI):
+   ```bash
+   docker exec -it kafka kafka-console-consumer --bootstrap-server localhost:9092 --topic raw_trades --from-beginning
+   ```
+
+6. **Set AWS credentials for the Spark job** (in `.env`, alongside the Kafka config):
+   ```
+   AWS_ACCESS_KEY_ID=...
+   AWS_SECRET_ACCESS_KEY=...
+   AWS_BUCKET=...
+   AWS_REGION=us-east-2
+   ```
+
+## 📦 How to Run (Phase 2 — Stream Processing)
+
+With Kafka and the producer running (Phase 1), start the Spark job in a separate terminal:
+
+```bash
+cd spark_job
+pip install -r requirements.txt
+export $(cat ../.env | xargs)   # or otherwise load the same env vars used by the producer
+
+spark-submit \
+    --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.1,org.apache.hadoop:hadoop-aws:3.3.4,com.amazonaws:aws-java-sdk-bundle:1.12.262 \
+    streaming_job.py
+```
+
+Adjust the `--packages` versions to match your installed Spark/Hadoop if they differ from 3.5.1/3.3.4. Streaming Bronze lands continuously in `s3://<bucket>/streaming/bronze/trades/`; Streaming Gold (windowed aggregates) lands in `s3://<bucket>/streaming/gold/trades/` once each 10-second window clears the 30-second watermark.
+
+**Note**: this job has been written against Coinbase's documented `market_trades` schema but not yet run against live traffic — see the schema comment in `streaming_job.py` for what to check first if it errors out on real data.
+
+## 📦 How to Run (Phase 3 — Analytics)
+
+1. In the Athena query editor, run `athena/create_tables.sql` (update the `LOCATION` bucket name first).
+2. Run `MSCK REPAIR TABLE streaming_gold_trades;` to register partitions after the Spark job has written at least one window.
+3. Grafana dashboard setup: not yet built (see Roadmap).
+
 ## Analytics & Observability (planned)
 
 This project isn't a crypto-trading analysis tool — the trade data is a realistic, free, genuinely live payload chosen to demonstrate streaming DE fundamentals, not a domain the author has trading opinions about. Accordingly, Phase 3's deliverables are deliberately framed around **proving the pipeline works and is observable**, not around generating market insights:
@@ -141,17 +206,17 @@ This project isn't a crypto-trading analysis tool — the trade data is a realis
 ## 🚀 Roadmap
 
 ### Phase 1 — Ingestion
-- [ ] Kafka infrastructure (Docker Compose, KRaft mode)
-- [ ] Coinbase producer
+- [x] Kafka infrastructure (Docker Compose, KRaft mode)
+- [x] Coinbase producer
 - [ ] End-to-end event flow validation
 
 ### Phase 2 — Stream Processing
-- [ ] Windowed aggregations
-- [ ] Watermark handling
+- [x] Windowed aggregations
+- [x] Watermark handling
 - [ ] Checkpoint recovery testing
 
 ### Phase 3 — Analytics & Observability
-- [ ] Athena tables over `streaming/trades/`
+- [x] Athena tables over `streaming/trades/`
 - [ ] Athena query demonstrating partition pruning (with scanned-data comparison)
 - [ ] Athena query joining batch + streaming Gold outputs
 - [ ] Grafana dashboard: pipeline health panels (watermark drops, end-to-end lag, consumer lag)
