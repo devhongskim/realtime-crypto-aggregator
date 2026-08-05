@@ -94,4 +94,16 @@ Spark does technically offer a Continuous Processing mode as a lower-latency alt
 
 ---
 
+## ADR-008: Why Streaming Silver is not materialized separately
+
+**Context**: The batch pipeline materializes Bronze, Silver, and Gold as distinct, separately stored layers — Silver specifically holding schema-validated, cleaned data ahead of the Gold aggregation step. The natural instinct was to mirror that exact structure here, with a `Streaming Silver` prefix in S3 holding validated/deduplicated trade events.
+
+**Decision**: Streaming Silver (validation: schema/null checks, `trade_id` deduplication) exists as a logical transformation step — applied in-memory, inside the same Spark Structured Streaming job, between reading from Kafka and windowing into Gold — rather than as its own physical storage layer written out to S3.
+
+**Rationale**: Streaming Bronze represents the durable raw event layer once successfully written to S3; Kafka provides the replay buffer between ingestion and persistence — Bronze's durability depends on Spark successfully completing that write, not on the data having existed in Kafka alone. Given that, the validation/dedup logic applied to produce "Silver" is deterministic given a fixed Bronze input — meaning "what Silver would have looked like" can always be reconstructed on demand by replaying Bronze through the same filtering logic again. Persisting it separately would add S3 write volume and an extra prefix to manage, without adding any information that isn't already recoverable from Bronze plus the (version-controlled) validation code itself. This is closer to a **Kappa architecture** pattern (one durable raw log, with downstream views treated as recomputable rather than permanently materialized) than the batch pipeline's stricter medallion pattern, and the two are allowed to differ, since the batch and streaming sides face genuinely different constraints — the batch pipeline persists Silver partly because Postgres/downstream consumers historically read from it directly, a concern that doesn't apply here.
+
+**Tradeoff accepted**: Debuggability is the real cost — if Gold output ever looks wrong, there's no separately stored intermediate artifact to inspect; diagnosing "was the raw data bad, or did the aggregation logic misbehave" requires re-running the validation/dedup logic against Bronze on demand rather than querying an already-materialized Silver table. Accepted here because that debugging scenario is expected to be occasional, and the logic being replayed is simple (schema checks and a `dropDuplicates` call) rather than expensive or slow to reconstruct.
+
+---
+
 Additional ADRs will be added here as further implementation decisions are actually made (e.g. the sink-writing strategy) — a decision isn't recorded until it's been made, rather than speculated on in advance.
