@@ -1,3 +1,0 @@
-websockets
-kafka-python
-python-dotenv
