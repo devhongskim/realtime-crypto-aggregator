@@ -5,7 +5,7 @@ A streaming data pipeline that ingests live cryptocurrency trade data, computes 
 ## 📚 Additional Documentation
 
 - **[ADR.md](ADR.md)** — Architecture Decision Records documenting the reasoning and tradeoffs behind every major technology choice in this project.
-- **[validation.md](validation.md)** — Planned validation scenarios for confirming the pipeline actually meets its requirements (restart-safety, watermark behavior, ordering) once built.
+- **[docs/validation.md](docs/validation.md)** — Planned validation scenarios for confirming the pipeline actually meets its requirements (restart-safety, watermark behavior, ordering) once built.
 
 ## Why this project exists
 [stock-data-pipeline](https://github.com/devhongskim/stock-data-pipeline) processes one clean, complete daily snapshot, with the luxury of retries and full reprocessing whenever needed. This project answers the opposite problem: data never stops arriving, there's no "end of batch" to wait for, and a late or out-of-order event has to be handled *while the stream keeps moving*. Windowed aggregation, watermarking, and restart-safe checkpointing are the concepts this project exists to demonstrate — the deliberate other half of a complete data engineering skill set.
@@ -32,7 +32,7 @@ Coinbase WS → Kafka → Spark Structured Streaming → S3 (streaming/trades/)
 ## Architecture (planned expansion — analytics layer)
 
 ```
-S3 (streaming/trades/) → Athena → Power BI / dashboard
+S3 (streaming/trades/) → Athena → Grafana (pipeline observability + trend dashboards)
 ```
 
 ## Architecture (final, unified — batch + streaming converge)
@@ -68,7 +68,8 @@ Spark Structured Streaming              │
 Streaming Bronze (S3)                   │
      │                                  │
      ▼                                  │
-Streaming Silver (validated events)     │
+[validate + dedupe — logical step,       │
+ not materialized separately, see ADR-008]│
      │                                  │
      ▼                                  │
 Streaming Gold (windowed metrics)       │
@@ -77,11 +78,11 @@ Streaming Gold (windowed metrics)       │
 Athena ──────────────────────────────────┘
                       │
                       ▼
-                  Power BI
+                  Grafana
 ```
 
-**Streaming Bronze** — raw trade events landed as-is from Kafka, pre-validation (mirrors the batch project's Bronze: immutable, minimally transformed).
-**Streaming Silver** — validated and deduplicated trade events (schema/null checks, duplicate `trade_id` removal) prior to windowing — conceptually mirrors the batch project's `validate_bronze_data` gate, kept intentionally thin since streaming validation has to happen inline rather than as a separate batch step.
+**Streaming Bronze** — raw trade events landed in S3 via Kafka, which durably buffers events between ingestion and persistence (mirrors the batch project's Bronze: immutable once written, minimally transformed).
+**Validation & deduplication** — schema/null checks and duplicate `trade_id` removal, applied as an in-memory transformation within the same Spark job — a logical step, not a separately materialized S3 layer (see [ADR-008](ADR.md#adr-008-why-streaming-silver-is-not-materialized-separately)).
 **Streaming Gold** — windowed rolling analytics (VWAP, trade count, volume, high/low per 10-second window) — the business-ready output (mirrors the batch project's Gold).
 
 ## Components
@@ -96,6 +97,7 @@ No API key, no auth required for most channels — genuinely live trade data for
 **4. Stream processor — PySpark Structured Streaming**, local mode (`local[*]`, no cluster):
 - Reads from Kafka via the `kafka` source connector
 - Parses trade events (symbol, price, size, trade timestamp)
+- Validates and deduplicates events in-memory (schema/null checks, duplicate `trade_id` removal) — a logical transformation step, not a separately materialized S3 layer (see [ADR-008](ADR.md#adr-008-why-streaming-silver-is-not-materialized-separately))
 - 10-second **tumbling window** aggregation on **event time** (see [ADR-003](ADR.md#adr-003-why-event-time-windows-not-processing-time)), computing VWAP, trade count, total volume, high/low
 - 30-second **watermark** bounds how late an event can arrive and still count (see [ADR-004](ADR.md#adr-004-why-watermark--30-seconds))
 - Writes completed windows to S3 as Parquet via `foreachBatch`, checkpointed for restart-safety
@@ -118,11 +120,23 @@ No API key, no auth required for most channels — genuinely live trade data for
 | **Stream Processing** | PySpark Structured Streaming |
 | **Storage** | AWS S3 (Parquet, Hive-partitioned) |
 | **Query Layer (planned)** | AWS Athena |
-| **BI (planned)** | Power BI |
+| **Observability / BI (planned)** | Grafana |
 
 ## Scaling Considerations
 - **Current**: single/small symbol set, `local[*]` Spark, single Kafka broker — appropriate for portfolio scale.
 - **At scale**: multiple Kafka partitions per symbol for parallelism; a real Spark cluster (EMR/Databricks) instead of local mode; Kafka Connect or a managed sink instead of hand-rolled `foreachBatch` writes.
+
+## Analytics & Observability (planned)
+
+This project isn't a crypto-trading analysis tool — the trade data is a realistic, free, genuinely live payload chosen to demonstrate streaming DE fundamentals, not a domain the author has trading opinions about. Accordingly, Phase 3's deliverables are deliberately framed around **proving the pipeline works and is observable**, not around generating market insights:
+
+- **Athena — partition pruning, demonstrated, not just claimed**: a query filtering on `symbol` and `window_start`, with the data-scanned/cost difference shown against an unpartitioned equivalent — proof the Hive-style partitioning decision (see [ADR-005](ADR.md#adr-005-why-parquet-instead-of-json)) actually pays off, not just a diagram claiming it does.
+- **Athena — a query joining the batch and streaming Gold outputs** in one query, the concrete payoff of the "unified lakehouse" architecture this project was designed around from the start, rather than leaving that convergence as a diagram that was never actually exercised.
+- **Grafana — pipeline health panels**, not trading charts:
+  - Watermark-dropped-event count over time (makes [ADR-004](ADR.md#adr-004-why-watermark--30-seconds)'s tradeoff measurable, not just theoretical)
+  - End-to-end lag (event time → S3 write time)
+  - Records processed per window / Kafka consumer lag
+  - A rolling VWAP/volume chart per symbol, included as proof the windowed computation itself is correct — not framed as a trading signal
 
 ## 🚀 Roadmap
 
@@ -136,9 +150,12 @@ No API key, no auth required for most channels — genuinely live trade data for
 - [ ] Watermark handling
 - [ ] Checkpoint recovery testing
 
-### Phase 3 — Analytics
-- [ ] Athena tables
-- [ ] Power BI dashboard
+### Phase 3 — Analytics & Observability
+- [ ] Athena tables over `streaming/trades/`
+- [ ] Athena query demonstrating partition pruning (with scanned-data comparison)
+- [ ] Athena query joining batch + streaming Gold outputs
+- [ ] Grafana dashboard: pipeline health panels (watermark drops, end-to-end lag, consumer lag)
+- [ ] Grafana panel: rolling VWAP/volume (correctness proof, not a trading signal)
 
 ### Phase 4 — Production Hardening
 - [ ] Automated tests
