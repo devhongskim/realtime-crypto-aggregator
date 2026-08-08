@@ -19,7 +19,7 @@ PARTITIONED BY (
     symbol STRING
 )
 STORED AS PARQUET
-LOCATION 's3://YOUR_BUCKET_NAME/streaming/gold/trades/'
+LOCATION 's3://YOUR_BUCKET_NAME/gold/trades/'
 TBLPROPERTIES ('parquet.compression' = 'SNAPPY');
 
 -- Streaming Bronze: raw parsed events, pre-validation. Kept queryable mainly
@@ -37,7 +37,7 @@ CREATE EXTERNAL TABLE IF NOT EXISTS streaming_bronze_trades (
     kafka_ingest_time TIMESTAMP
 )
 STORED AS PARQUET
-LOCATION 's3://YOUR_BUCKET_NAME/streaming/bronze/trades/'
+LOCATION 's3://YOUR_BUCKET_NAME/bronze/trades/'
 TBLPROPERTIES ('parquet.compression' = 'SNAPPY');
 
 -- After creating streaming_gold_trades, register its partitions:

@@ -4,3 +4,12 @@ __pycache__/
 venv/
 checkpoint/
 *.log
+
+# Terraform
+terraform/.terraform/
+terraform/*.tfstate
+terraform/*.tfstate.*
+terraform/*.tfvars
+terraform/crash.log
+terraform/crash.*.log
+terraform/.terraform.lock.hcl

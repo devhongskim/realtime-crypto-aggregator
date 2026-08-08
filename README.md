@@ -26,18 +26,18 @@ Every architectural decision in this project traces back to one of these six req
 ## Architecture (current scope)
 
 ```
-Coinbase WS → Kafka → Spark Structured Streaming → S3 (streaming/trades/)
+Coinbase WS → Kafka → Spark Structured Streaming → S3 (bronze/trades/, gold/trades/)
 ```
 
 ## Architecture (planned expansion — analytics layer)
 
 ```
-S3 (streaming/trades/) → Athena → Grafana (pipeline observability + trend dashboards)
+S3 (bronze/trades/, gold/trades/) → Athena → Grafana (pipeline observability + trend dashboards)
 ```
 
 ## Architecture (final, unified — batch + streaming converge)
 
-Two independently-built pipelines — one batch, one streaming — converging on a shared query layer and a shared BI layer. This is a realistic "lakehouse" pattern: once an organization has both batch and streaming sources, both typically end up feeding the same warehouse/query layer rather than living as permanently separate systems.
+Two independently-built pipelines — one batch, one streaming — each with its own dedicated S3 bucket, converging on a shared query layer (Athena) and a shared BI layer (Grafana). This is a realistic "lakehouse" pattern: Athena can query and join tables across separate S3 buckets without issue, so convergence happens at the catalog/query layer, not by forcing both pipelines into shared storage -- which mirrors how most real organizations actually separate storage by domain/team while unifying access at the query layer.
 
 ```
                     Batch Side
@@ -102,7 +102,7 @@ No API key, no auth required for most channels — genuinely live trade data for
 - 30-second **watermark** bounds how late an event can arrive and still count (see [ADR-004](ADR.md#adr-004-why-watermark--30-seconds))
 - Writes completed windows to S3 as Parquet via `foreachBatch`, checkpointed for restart-safety
 
-**5. Sink** — same S3 bucket as the batch project, new prefix: `streaming/trades/window_start=<timestamp>/symbol=<symbol>/`.
+**5. Sink** — a dedicated S3 bucket for this project (`hongskim-crypto-stream`, provisioned via Terraform -- see below), separate from the batch project's bucket. Convergence between the two pipelines happens at the query layer (Athena, which can join tables across different S3 buckets without issue), not at the storage layer -- this keeps blast radius isolated per project and mirrors how most organizations actually separate storage by domain/team, unifying only at the catalog/query layer. Paths: `bronze/trades/` (raw events) and `gold/trades/window_start=<timestamp>/symbol=<symbol>/` (windowed aggregates, Hive-partitioned).
 
 ## ⚠️ Implementation Notes (heads-up for later)
 
@@ -125,6 +125,18 @@ No API key, no auth required for most channels — genuinely live trade data for
 ## Scaling Considerations
 - **Current**: single/small symbol set, `local[*]` Spark, single Kafka broker — appropriate for portfolio scale.
 - **At scale**: multiple Kafka partitions per symbol for parallelism; a real Spark cluster (EMR/Databricks) instead of local mode; Kafka Connect or a managed sink instead of hand-rolled `foreachBatch` writes.
+
+## 📦 How to Run (Phase 0 — Provision Infrastructure)
+
+Unlike the batch project's bucket (imported from pre-existing infrastructure), this bucket doesn't exist yet -- Terraform creates it from scratch:
+
+```bash
+cd terraform
+cp terraform.tfvars.example terraform.tfvars   # confirm bucket_name is available/unique
+terraform init
+terraform plan
+terraform apply
+```
 
 ## 📦 How to Run (Phase 1 — Ingestion)
 
@@ -163,7 +175,7 @@ Only ingestion is built so far (Kafka + producer) — Spark processing, Athena, 
    ```
    AWS_ACCESS_KEY_ID=...
    AWS_SECRET_ACCESS_KEY=...
-   AWS_BUCKET=...
+   AWS_BUCKET=hongskim-crypto-stream
    AWS_REGION=us-east-2
    ```
 
@@ -181,7 +193,7 @@ spark-submit \
     streaming_job.py
 ```
 
-Adjust the `--packages` versions to match your installed Spark/Hadoop if they differ from 3.5.1/3.3.4. Streaming Bronze lands continuously in `s3://<bucket>/streaming/bronze/trades/`; Streaming Gold (windowed aggregates) lands in `s3://<bucket>/streaming/gold/trades/` once each 10-second window clears the 30-second watermark.
+Adjust the `--packages` versions to match your installed Spark/Hadoop if they differ from 3.5.1/3.3.4. Streaming Bronze lands continuously in `s3://<bucket>/bronze/trades/`; Streaming Gold (windowed aggregates) lands in `s3://<bucket>/gold/trades/` once each 10-second window clears the 30-second watermark.
 
 **Note**: this job has been written against Coinbase's documented `market_trades` schema but not yet run against live traffic — see the schema comment in `streaming_job.py` for what to check first if it errors out on real data.
 
@@ -216,7 +228,7 @@ This project isn't a crypto-trading analysis tool — the trade data is a realis
 - [ ] Checkpoint recovery testing
 
 ### Phase 3 — Analytics & Observability
-- [x] Athena tables over `streaming/trades/`
+- [x] Athena tables over `bronze/trades/` and `gold/trades/`
 - [ ] Athena query demonstrating partition pruning (with scanned-data comparison)
 - [ ] Athena query joining batch + streaming Gold outputs
 - [ ] Grafana dashboard: pipeline health panels (watermark drops, end-to-end lag, consumer lag)

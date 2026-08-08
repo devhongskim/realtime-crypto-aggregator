@@ -38,8 +38,8 @@ KAFKA_TOPIC = "raw_trades"
 AWS_BUCKET = os.environ["AWS_BUCKET"]  # fail fast if not set -- no silent misconfiguration
 AWS_REGION = os.getenv("AWS_REGION", "us-east-2")
 
-S3_BRONZE_PATH = f"s3a://{AWS_BUCKET}/streaming/bronze/trades/"
-S3_GOLD_PATH = f"s3a://{AWS_BUCKET}/streaming/gold/trades/"
+S3_BRONZE_PATH = f"s3a://{AWS_BUCKET}/bronze/trades/"
+S3_GOLD_PATH = f"s3a://{AWS_BUCKET}/gold/trades/"
 CHECKPOINT_LOCATION = "./checkpoint/streaming_job/"  # gitignored, disposable -- see README
 
 ALLOWED_SYMBOLS = ["BTC-USD", "ETH-USD"]
@@ -80,7 +80,8 @@ def build_spark_session() -> SparkSession:
         .config("spark.hadoop.fs.s3a.secret.key", os.environ["AWS_SECRET_ACCESS_KEY"])
         .config("spark.hadoop.fs.s3a.endpoint.region", AWS_REGION)
         .config("spark.hadoop.fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem")
-        .config("spark.sql.shuffle.partitions", "4")  # small local workload, no need for 200 default
+        .config("spark.hadoop.fs.s3a.aws.credentials.provider", "org.apache.hadoop.fs.s3a.SimpleAWSCredentialsProvider")
+        .config("spark.sql.shuffle.partitions", "4")
         .getOrCreate()
     )
 
@@ -193,9 +194,6 @@ def write_batch_to_gold_s3(batch_df, batch_id: int) -> None:
     edge cases noted in the README's Implementation Notes. Hive-style
     partitioning by window_start/symbol makes this directly Athena-friendly.
     """
-    if batch_df.rdd.isEmpty():
-        return
-
     (
         batch_df.write
         .mode("append")
@@ -208,7 +206,9 @@ def main() -> None:
     spark = build_spark_session()
     spark.sparkContext.setLogLevel("WARN")
 
+    print("Attempting to connect to Kafka stream...")
     raw_trades = read_raw_trades(spark)
+    print("Successfully connected to Kafka!")
 
     # Streaming Bronze: durable raw layer, written independently of validation.
     bronze_query = write_streaming_bronze(raw_trades)
