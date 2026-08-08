@@ -220,12 +220,12 @@ This project isn't a crypto-trading analysis tool — the trade data is a realis
 ### Phase 1 — Ingestion
 - [x] Kafka infrastructure (Docker Compose, KRaft mode)
 - [x] Coinbase producer
-- [ ] End-to-end event flow validation
+- [x] End-to-end event flow validation
 
 ### Phase 2 — Stream Processing
 - [x] Windowed aggregations
 - [x] Watermark handling
-- [ ] Checkpoint recovery testing
+- [x] Checkpoint recovery testing
 
 ### Phase 3 — Analytics & Observability
 - [x] Athena tables over `bronze/trades/` and `gold/trades/`
