@@ -2,9 +2,32 @@ import subprocess
 import time
 import sys
 import os
+import shutil
+import argparse
 from pathlib import Path
 
+parser = argparse.ArgumentParser(description="Launch crypto streaming pipeline.")
+parser.add_argument("--clean", action="store_true", help="Wipe old checkpoints and state files for a fresh start.")
+args = parser.parse_args()
+
 root_dir = Path(__file__).resolve().parent
+
+if args.clean:
+    print("🧹 Cleaning up old local Spark checkpoints and temp files (--clean flag detected)...")
+    dirs_to_clean = [
+        root_dir / "spark_job" / "checkpoint",
+        root_dir / "spark_job" / "_checkpoint",
+        root_dir / "spark_job" / "spark-warehouse",
+    ]
+    for d in dirs_to_clean:
+        if d.exists() and d.is_dir():
+            try:
+                shutil.rmtree(d)
+                print(f"   Deleted: {d.name}")
+            except Exception as e:
+                print(f"   ⚠️ Could not delete {d.name}: {e}")
+else:
+    print("🔄 Preserving existing checkpoints for state recovery (use --clean to wipe).")
 
 print("🐳 Step 1: Starting Docker Compose (Kafka)...")
 try:
@@ -34,7 +57,6 @@ packages = (
 spark_dir = root_dir / "spark_job"
 env_file = root_dir / ".env"
 
-# Build a clean PowerShell script command block using raw strings/escaped regex
 ps_command = (
     f"cd '{spark_dir}'; "
     f"Get-Content '{env_file}' | ForEach-Object {{ "
@@ -48,10 +70,9 @@ ps_command = (
     f"streaming_job.py"
 )
 
-# Open a new PowerShell window running the command block
 subprocess.Popen(["start", "powershell", "-NoExit", "-Command", ps_command], shell=True)
 
-print("\n🎉 All systems launched! Producer is running in the background, and Spark has its own window.")
+print("\n🎉 All systems launched!")
 print("💡 Press Ctrl+C in this main window whenever you want to stop the producer and Docker.")
 
 try:
