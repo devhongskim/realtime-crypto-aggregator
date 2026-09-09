@@ -229,6 +229,7 @@ This project isn't a crypto-trading analysis tool — the trade data is a realis
 
 ### Phase 3 — Analytics & Observability
 - [x] Athena tables over `bronze/trades/` and `gold/trades/`
+- [x] Athena flat table & view mapping for S3 Parquet paths and epoch timestamps
 - [ ] Athena query demonstrating partition pruning (with scanned-data comparison)
 - [ ] Athena query joining batch + streaming Gold outputs
 - [ ] Grafana dashboard: pipeline health panels (watermark drops, end-to-end lag, consumer lag)
