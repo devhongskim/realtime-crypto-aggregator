@@ -238,3 +238,8 @@ This project isn't a crypto-trading analysis tool — the trade data is a realis
 ### Phase 4 — Production Hardening
 - [ ] Automated tests
 - [ ] CI pipeline
+
+### Proof of Work: Athena Query Results
+
+After configuring the flat table and the `streaming_gold_pretty` view over the S3 Parquet files, querying the live windowed metrics yields clean, human-readable records:
+<img width="2511" height="1175" alt="athena_query_results" src="https://github.com/user-attachments/assets/49ea33a4-dd22-4606-a07f-e3b724d6b3a5" />
