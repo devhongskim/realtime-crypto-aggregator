@@ -74,6 +74,7 @@ subprocess.Popen(["start", "powershell", "-NoExit", "-Command", ps_command], she
 
 print("\n🎉 All systems launched!")
 print("💡 Press Ctrl+C in this main window whenever you want to stop the producer and Docker.")
+print("💡 Reminder: If Spark fails to bind to 127.0.0.1, your network stack may still be settling after a fresh boot. Wait a moment and try again.")
 
 try:
     while True:

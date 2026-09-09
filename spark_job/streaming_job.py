@@ -21,6 +21,8 @@ AWS_BUCKET, AWS_REGION, KAFKA_BOOTSTRAP_SERVERS (defaults to localhost:9092).
 
 import os
 
+print("Reminder: This script must be run via spark-submit, not as a standalone python script.")
+
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import (
     col, from_json, window, avg, count, sum as spark_sum,
@@ -35,8 +37,7 @@ from pyspark.sql.types import (
 KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
 KAFKA_TOPIC = "raw_trades"
 
-AWS_BUCKET = os.environ["AWS_BUCKET"]  # fail fast if not set -- no silent misconfiguration
-AWS_REGION = os.getenv("AWS_REGION", "us-east-2")
+AWS_BUCKET = os.getenv("AWS_BUCKET")
 
 S3_BRONZE_PATH = f"s3a://{AWS_BUCKET}/bronze/trades/"
 S3_GOLD_PATH = f"s3a://{AWS_BUCKET}/gold/trades/"
@@ -51,9 +52,6 @@ WATERMARK_DELAY = "30 seconds"
 # --- Schema --------------------------------------------------------------
 # Matches the envelope shape produced by producer/coinbase_producer.py:
 # {"ingested_at": ..., "source": ..., "trade": {trade_id, product_id, price, size, side, time}}
-# NOTE: verify field names against real captured traffic once the producer
-# has actually run -- Coinbase's schema is inferred from docs, not yet
-# confirmed against live payloads. Adjust here if real events differ.
 
 TRADE_SCHEMA = StructType([
     StructField("trade_id", StringType(), True),
@@ -78,7 +76,7 @@ def build_spark_session() -> SparkSession:
         .master("local[*]")
         .config("spark.hadoop.fs.s3a.access.key", os.environ["AWS_ACCESS_KEY_ID"])
         .config("spark.hadoop.fs.s3a.secret.key", os.environ["AWS_SECRET_ACCESS_KEY"])
-        .config("spark.hadoop.fs.s3a.endpoint.region", AWS_REGION)
+        .config("spark.hadoop.fs.s3a.endpoint.region", os.environ["AWS_REGION"])
         .config("spark.hadoop.fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem")
         .config("spark.hadoop.fs.s3a.aws.credentials.provider", "org.apache.hadoop.fs.s3a.SimpleAWSCredentialsProvider")
         .config("spark.sql.shuffle.partitions", "4")
@@ -94,6 +92,7 @@ def read_raw_trades(spark: SparkSession):
         .option("kafka.bootstrap.servers", KAFKA_BOOTSTRAP_SERVERS)
         .option("subscribe", KAFKA_TOPIC)
         .option("startingOffsets", "earliest")
+        .option("failOnDataLoss", "false")
         .load()
     )
 
@@ -206,9 +205,7 @@ def main() -> None:
     spark = build_spark_session()
     spark.sparkContext.setLogLevel("WARN")
 
-    print("Attempting to connect to Kafka stream...")
     raw_trades = read_raw_trades(spark)
-    print("Successfully connected to Kafka!")
 
     # Streaming Bronze: durable raw layer, written independently of validation.
     bronze_query = write_streaming_bronze(raw_trades)
