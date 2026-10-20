@@ -25,7 +25,7 @@ print("Reminder: This script must be run via spark-submit, not as a standalone p
 
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import (
-    col, from_json, window, avg, count, sum as spark_sum,
+    col, date_format, from_json, window, avg, count, sum as spark_sum,
     max as spark_max, min as spark_min, current_timestamp, to_timestamp,
 )
 from pyspark.sql.types import (
@@ -174,6 +174,7 @@ def compute_windowed_gold(df):
         )
         .select(
             col("window.start").alias("window_start"),
+            date_format(col("window.start"), "yyyy-MM-dd HH:mm:ss").alias("window_folder"),
             col("window.end").alias("window_end"),
             col("symbol"),
             col("vwap"),
@@ -191,12 +192,12 @@ def write_batch_to_gold_s3(batch_df, batch_id: int) -> None:
     foreachBatch sink -- lets Spark's own DataFrameWriter own the commit
     (rather than hand-rolled file I/O), sidestepping the S3 commit-protocol
     edge cases noted in the README's Implementation Notes. Hive-style
-    partitioning by window_start/symbol makes this directly Athena-friendly.
+    partitioning by window_folder/symbol makes this directly Athena-friendly.
     """
     (
         batch_df.write
         .mode("append")
-        .partitionBy("window_start", "symbol")
+        .partitionBy("window_folder", "symbol")
         .parquet(S3_GOLD_PATH)
     )
 
