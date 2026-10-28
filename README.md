@@ -250,7 +250,8 @@ Streaming Gold is Hive-partitioned by UTC date and symbol (`gold/trades/dt=.../s
 | No partition filter | 4.62 KB |
 | `WHERE dt = '2026-10-28' AND symbol = 'BTC-USD'` | **2.15 KB (−53%)** |
 
-<!-- TODO: replace the two src values below with the GitHub upload links for your screenshots -->
---images here: unpruned and pruned
+<img width="2535" height="1321" alt="athena_unpruned_query" src="https://github.com/user-attachments/assets/d8dc7ec8-a189-4976-bc7e-076eeab537ce" />
+<img width="2535" height="1321" alt="athena_pruned_query" src="https://github.com/user-attachments/assets/5452f897-8102-4d9e-b303-a771b6404697" />
+
 
 Measured on a single day of data, where the entire saving comes from skipping the other symbol's folder. The gap widens with every additional day of history: a one-day query against 30 days of data reads roughly 1/60th of the table.
