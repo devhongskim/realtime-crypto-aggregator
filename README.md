@@ -233,7 +233,7 @@ This project isn't a crypto-trading analysis tool — the trade data is a realis
 - [x] Athena tables over `bronze/trades/` and `gold/trades/`
 - [x] Athena partition projection on `dt`/`symbol` (no `MSCK REPAIR` needed)
 - [x] Athena query demonstrating partition pruning (with scanned-data comparison)
-- [ ] Athena query joining batch + streaming Gold outputs
+- [x] Athena query joining batch + streaming Gold outputs
 - [ ] Grafana dashboard: pipeline health panels (watermark drops, end-to-end lag, consumer lag)
 - [ ] Grafana panel: rolling VWAP/volume (correctness proof, not a trading signal)
 
@@ -252,3 +252,37 @@ Streaming Gold is Hive-partitioned by UTC date and symbol (`gold/trades/dt=.../s
 <img width="2039" height="639" alt="athena_unpruned_query" src="https://github.com/user-attachments/assets/9ae4200c-483e-49c9-90aa-ff9cf5b89dfd" />
 <img width="2041" height="646" alt="athena_pruned_query" src="https://github.com/user-attachments/assets/eba20c10-12b0-4c71-9dce-565564bdc156" />
 Measured on a single day of data, where the entire saving comes from skipping the other symbol's folder. The gap widens with every additional day of history: a one-day query against 30 days of data reads roughly 1/60th of the table.
+
+## Proof of Work: Batch + Streaming Join in One Athena Query
+
+The payoff of the "unified lakehouse" design: one Athena query reading from **two independently built pipelines in two separate S3 buckets**. Streaming Gold (`hongskim-crypto-stream`, this project) and batch Gold from [stock-data-pipeline](https://github.com/devhongskim/stock-data-pipeline) (`hongskim-stock-pipeline`), each registered as its own partition-projected table and converging only at the query layer.
+
+The two datasets don't share dates yet (batch history covers Jul 1 – Aug 7, 2026; streaming data starts Oct 28), so instead of a date-matched join the query compares **BTC's move so far today** against **each stock's typical trading day**, using identical metric definitions on both sides: return = (close − open) / open, volatility = (high − low) / open. Both sides filter on their partition columns, so each table reads only the folders it needs.
+
+- **Streaming side**: today's 10-second BTC-USD windows reduced to one summary row (first/last window VWAP as open/close proxies, overall high/low)
+- **Batch side**: daily metrics averaged per ticker across 20–27 trading days
+- **`CROSS JOIN`**: attaches the single BTC summary row to every ticker. There is no shared key, by design.
+
+Full query: [`athena/batch_streaming_join.sql`](athena/batch_streaming_join.sql)
+
+<!-- TODO: replace src with the GitHub upload link for the screenshot -->
+<img alt="crypto_and_stock_join" src="CRYPTO_STOCK_JOIN_SCREENSHOT_URL" />
+
+| Ticker | Trading days | Avg daily return % | Avg intraday volatility % | Max intraday volatility % | BTC vol ÷ stock avg vol |
+|---|---|---|---|---|---|
+| INTC | 20 | −0.87 | 6.99 | 10.17 | 0.03 |
+| AMD | 27 | −0.37 | 6.18 | 9.68 | 0.03 |
+| TSLA | 27 | −0.53 | 3.92 | 10.06 | 0.05 |
+| AVGO | 20 | 0.25 | 3.61 | 5.34 | 0.06 |
+| NVDA | 27 | 0.38 | 3.47 | 6.39 | 0.06 |
+| META | 20 | −0.08 | 3.34 | 6.79 | 0.06 |
+| GOOGL | 20 | 0.18 | 2.85 | 7.23 | 0.07 |
+| MSFT | 27 | 0.54 | 2.81 | 5.99 | 0.07 |
+| AMZN | 20 | −0.10 | 2.60 | 4.28 | 0.08 |
+| AAPL | 27 | 0.68 | 2.40 | 5.35 | 0.09 |
+
+BTC-USD (streaming): **+0.07% return, 0.21% volatility** across 42 windows from 2026-10-28 00:21 to 01:23 UTC. Query stats: 645 ms run time, **15.82 KB scanned across both buckets**.
+
+**Reading the results honestly**: the BTC side covers about one hour of streaming data while each stock figure is a full trading session, so the tiny volatility ratios reflect the time spans, not a real claim that BTC is calmer than tech stocks. The point here is the mechanics: cross-bucket, cross-pipeline, partition-pruned SQL with consistent metric definitions. Once both pipelines run on the same trading days, the same tables support a true same-session, date-matched comparison (BTC over 09:30–16:00 New York time vs. each stock's open-to-close return), drafted in the same `.sql` file.
+
+**A data-quality finding the join surfaced**: five tickers (INTC, AVGO, META, GOOGL, AMZN) have only 20 usable trading days against 27 for the others in the same date range, and 2026-07-10 has rows with null metrics. That's a batch-side gap to investigate, exactly the kind of issue that only becomes visible once the two pipelines' outputs are queried side by side.
