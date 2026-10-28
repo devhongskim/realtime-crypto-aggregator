@@ -82,6 +82,22 @@ def publish_trade(producer: KafkaProducer, trade: dict) -> None:
         logger.error(f"Failed to publish trade for {symbol}: {e}")
 
 
+def extract_trades(message: dict) -> list:
+    """
+    Return the individual trade dicts contained in one Coinbase WebSocket
+    message. market_trades messages carry one or more trade events inside an
+    "events" list; anything else (e.g. the initial subscriptions confirmation)
+    yields no trades. Pure function, so it's unit-testable without a socket.
+    """
+    if message.get("channel") != "market_trades":
+        return []
+    return [
+        trade
+        for event in message.get("events", [])
+        for trade in event.get("trades", [])
+    ]
+
+
 async def stream_trades(producer: KafkaProducer) -> None:
     """
     Maintain the WebSocket connection, resubscribing and reconnecting on any
@@ -96,16 +112,8 @@ async def stream_trades(producer: KafkaProducer) -> None:
 
                 async for raw_message in ws:
                     message = json.loads(raw_message)
-
-                    # market_trades messages carry one or more trade events
-                    # inside an "events" list; ignore anything else (e.g. the
-                    # initial subscriptions confirmation message).
-                    if message.get("channel") != "market_trades":
-                        continue
-
-                    for event in message.get("events", []):
-                        for trade in event.get("trades", []):
-                            publish_trade(producer, trade)
+                    for trade in extract_trades(message):
+                        publish_trade(producer, trade)
 
         except (websockets.ConnectionClosed, OSError) as e:
             logger.warning(

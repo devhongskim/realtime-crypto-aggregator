@@ -1,0 +1,4 @@
+# Everything needed to run the test suite (locally or in CI).
+-r spark_job/requirements.txt
+-r producer/requirements.txt
+pytest==8.3.3

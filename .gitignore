@@ -4,6 +4,7 @@ __pycache__/
 venv/
 checkpoint/
 *.log
+.pytest_cache/
 
 # Terraform
 terraform/.terraform/

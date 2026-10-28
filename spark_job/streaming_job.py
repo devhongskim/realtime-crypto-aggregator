@@ -98,7 +98,17 @@ def read_raw_trades(spark: SparkSession):
         .option("failOnDataLoss", "false")
         .load()
     )
+    return parse_trades(raw)
 
+
+def parse_trades(raw):
+    """
+    Parse raw Kafka records (key/value as binary, timestamp) into typed trade
+    columns. Split out from read_raw_trades so it can be unit-tested against a
+    plain DataFrame without a running Kafka broker. Malformed JSON yields
+    null fields rather than an exception, and is filtered out downstream by
+    validate_and_dedupe.
+    """
     parsed = raw.select(
         col("key").cast("string").alias("kafka_key"),
         from_json(col("value").cast("string"), ENVELOPE_SCHEMA).alias("envelope"),
@@ -116,13 +126,12 @@ def read_raw_trades(spark: SparkSession):
     )
 
 
-def validate_and_dedupe(df):
+def validate_trades(df):
     """
-    Logical Streaming Silver step (ADR-008) -- schema/null validation,
-    symbol allow-listing, and trade_id deduplication, all in-memory.
-    Not written to S3 as its own layer; see ADR-008 for why.
+    Schema/null validation and symbol allow-listing. Stateless, so it works
+    on both streaming and batch DataFrames (and is unit-testable as batch).
     """
-    validated = (
+    return (
         df
         .filter(col("trade_id").isNotNull())
         .filter(col("symbol").isNotNull())
@@ -131,6 +140,16 @@ def validate_and_dedupe(df):
         .filter(col("event_time").isNotNull())
         .filter(col("symbol").isin(ALLOWED_SYMBOLS))
     )
+
+
+def validate_and_dedupe(df):
+    """
+    Logical Streaming Silver step (ADR-008) -- validation (validate_trades)
+    plus trade_id deduplication, all in-memory. Not written to S3 as its own
+    layer; see ADR-008 for why. Streaming-only: dropDuplicatesWithinWatermark
+    is not supported on batch DataFrames.
+    """
+    validated = validate_trades(df)
 
     # Watermark must be applied before dropDuplicatesWithinWatermark so Spark
     # knows how long to retain dedup state before safely discarding it.
