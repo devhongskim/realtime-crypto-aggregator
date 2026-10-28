@@ -265,18 +265,7 @@ The two datasets don't share dates yet (batch history covers Jul 1 – Aug 7, 20
 
 Full query: [`athena/batch_streaming_join.sql`](athena/batch_streaming_join.sql)
 <img width="2431" height="1072" alt="crypto_and_stock_join" src="https://github.com/user-attachments/assets/4555594a-0ecc-4852-b874-185e9fe917d1" />
-| Ticker | Trading days | Avg daily return % | Avg intraday volatility % | Max intraday volatility % | BTC vol ÷ stock avg vol |
-|---|---|---|---|---|---|
-| INTC | 20 | −0.87 | 6.99 | 10.17 | 0.03 |
-| AMD | 27 | −0.37 | 6.18 | 9.68 | 0.03 |
-| TSLA | 27 | −0.53 | 3.92 | 10.06 | 0.05 |
-| AVGO | 20 | 0.25 | 3.61 | 5.34 | 0.06 |
-| NVDA | 27 | 0.38 | 3.47 | 6.39 | 0.06 |
-| META | 20 | −0.08 | 3.34 | 6.79 | 0.06 |
-| GOOGL | 20 | 0.18 | 2.85 | 7.23 | 0.07 |
-| MSFT | 27 | 0.54 | 2.81 | 5.99 | 0.07 |
-| AMZN | 20 | −0.10 | 2.60 | 4.28 | 0.08 |
-| AAPL | 27 | 0.68 | 2.40 | 5.35 | 0.09 |
+
 
 BTC-USD (streaming): **+0.07% return, 0.21% volatility** across 42 windows from 2026-10-28 00:21 to 01:23 UTC. Query stats: 645 ms run time, **15.82 KB scanned across both buckets**.
 
