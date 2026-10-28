@@ -264,10 +264,7 @@ The two datasets don't share dates yet (batch history covers Jul 1 – Aug 7, 20
 - **`CROSS JOIN`**: attaches the single BTC summary row to every ticker. There is no shared key, by design.
 
 Full query: [`athena/batch_streaming_join.sql`](athena/batch_streaming_join.sql)
-
-<!-- TODO: replace src with the GitHub upload link for the screenshot -->
-<img alt="crypto_and_stock_join" src="CRYPTO_STOCK_JOIN_SCREENSHOT_URL" />
-
+<img width="2431" height="1072" alt="crypto_and_stock_join" src="https://github.com/user-attachments/assets/4555594a-0ecc-4852-b874-185e9fe917d1" />
 | Ticker | Trading days | Avg daily return % | Avg intraday volatility % | Max intraday volatility % | BTC vol ÷ stock avg vol |
 |---|---|---|---|---|---|
 | INTC | 20 | −0.87 | 6.99 | 10.17 | 0.03 |
