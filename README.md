@@ -29,7 +29,7 @@ Every architectural decision in this project traces back to one of these six req
 Coinbase WS → Kafka → Spark Structured Streaming → S3 (bronze/trades/, gold/trades/)
 ```
 
-## Architecture (planned expansion — analytics layer)
+## Architecture (analytics layer)
 
 ```
 S3 (bronze/trades/, gold/trades/) → Athena → Grafana (pipeline observability + trend dashboards)
@@ -121,7 +121,7 @@ No API key, no auth required for most channels — genuinely live trade data for
 | **Stream Processing** | PySpark Structured Streaming |
 | **Storage** | AWS S3 (Parquet, Hive-partitioned) |
 | **Query Layer** | AWS Athena (partition projection) |
-| **Observability / BI (planned)** | Grafana |
+| **Observability** | Grafana 11.3 (Athena data source, provisioned as code) |
 
 ## Scaling Considerations
 - **Current**: single/small symbol set, `local[*]` Spark, single Kafka broker — appropriate for portfolio scale.
@@ -141,7 +141,7 @@ terraform apply
 
 ## 📦 How to Run (Phase 1 — Ingestion)
 
-Only ingestion is built so far (Kafka + producer) — Spark processing, Athena, and Grafana come in later phases.
+Phase 1 covers ingestion (Kafka + producer). Spark processing (Phase 2) and Athena + Grafana (Phase 3) build on top of it.
 
 1. **Start Kafka** (KRaft mode, single broker, via Docker Compose):
    ```bash
@@ -203,19 +203,30 @@ Adjust the `--packages` versions to match your installed Spark/Hadoop if they di
    ```sql
    SELECT * FROM streaming_gold_trades WHERE dt = '2026-10-28' AND symbol = 'BTC-USD' LIMIT 10;
    ```
-3. Grafana dashboard setup: not yet built (see Roadmap).
+3. **Grafana** (runs as part of the same Docker Compose stack, see [ADR-010](ADR.md#adr-010-why-a-self-hosted-grafana-provisioned-as-code-querying-athena-directly)):
+   1. In IAM, create a user (e.g. `grafana-athena-reader`) with the policy in `grafana/iam/grafana-athena-reader-policy.json`, and create an access key for it. This is deliberately *not* the Spark job's read/write key.
+   2. Add to `.env`:
+      ```
+      GRAFANA_AWS_ACCESS_KEY_ID=...
+      GRAFANA_AWS_SECRET_ACCESS_KEY=...
+      ATHENA_OUTPUT_LOCATION=s3://<bucket>/athena-results/grafana/
+      GRAFANA_ADMIN_PASSWORD=...
+      ```
+   3. `docker compose up -d` (or `python launch.py`). On first start Grafana installs the Athena plugin (needs internet access to grafana.com), then auto-provisions the Athena data source and the dashboard.
+   4. Open http://localhost:3000 → **Dashboards → Crypto Pipeline → Crypto Streaming Pipeline: Health**.
 
-## Analytics & Observability (planned)
+## Analytics & Observability
 
 This project isn't a crypto-trading analysis tool — the trade data is a realistic, free, genuinely live payload chosen to demonstrate streaming DE fundamentals, not a domain the author has trading opinions about. Accordingly, Phase 3's deliverables are deliberately framed around **proving the pipeline works and is observable**, not around generating market insights:
 
 - **Athena — partition pruning, demonstrated, not just claimed**: a query filtering on the partition columns `dt` and `symbol`, with the data-scanned/cost difference shown against an unfiltered equivalent — proof the Hive-style partitioning decision (see [ADR-009](ADR.md#adr-009-why-partition-gold-by-day-instead-of-by-window-timestamp)) actually pays off, not just a diagram claiming it does.
 - **Athena — a query joining the batch and streaming Gold outputs** in one query, the concrete payoff of the "unified lakehouse" architecture this project was designed around from the start, rather than leaving that convergence as a diagram that was never actually exercised.
-- **Grafana — pipeline health panels**, not trading charts:
-  - Watermark-dropped-event count over time (makes [ADR-004](ADR.md#adr-004-why-watermark--30-seconds)'s tradeoff measurable, not just theoretical)
-  - End-to-end lag (event time → S3 write time)
-  - Records processed per window / Kafka consumer lag
-  - A rolling VWAP/volume chart per symbol, included as proof the windowed computation itself is correct — not framed as a trading signal
+- **Grafana — pipeline health panels**, not trading charts (see [ADR-010](ADR.md#adr-010-why-a-self-hosted-grafana-provisioned-as-code-querying-athena-directly)):
+  - ✅ Freshness: seconds since the last Gold write (green / yellow / red thresholds)
+  - ✅ End-to-end latency (window close → S3 write), which makes [ADR-004](ADR.md#adr-004-why-watermark--30-seconds)'s watermark cost measurable, not just theoretical
+  - ✅ Window completeness (windows per minute; 6 is healthy) and trades per window
+  - ✅ VWAP with high/low per symbol, included as proof the windowed computation itself is correct (VWAP must sit between each window's low and high), not framed as a trading signal
+  - ⏳ Watermark-dropped-event count and Kafka consumer lag: these never reach S3, so they need Spark/Kafka metrics exported to a metrics backend (e.g. Prometheus)
 
 ## 🚀 Roadmap
 
@@ -234,8 +245,9 @@ This project isn't a crypto-trading analysis tool — the trade data is a realis
 - [x] Athena partition projection on `dt`/`symbol` (no `MSCK REPAIR` needed)
 - [x] Athena query demonstrating partition pruning (with scanned-data comparison)
 - [x] Athena query joining batch + streaming Gold outputs
-- [ ] Grafana dashboard: pipeline health panels (watermark drops, end-to-end lag, consumer lag)
-- [ ] Grafana panel: rolling VWAP/volume (correctness proof, not a trading signal)
+- [x] Grafana dashboard provisioned as code: freshness, end-to-end latency, window completeness, throughput
+- [x] Grafana panels: per-window VWAP with high/low per symbol (correctness proof, not a trading signal)
+- [ ] Grafana: watermark-dropped events and Kafka consumer lag (requires exporting Spark/Kafka metrics, e.g. Prometheus)
 
 ### Phase 4 — Production Hardening
 - [ ] Automated tests
@@ -272,3 +284,21 @@ BTC-USD (streaming): **+0.07% return, 0.21% volatility** across 42 windows from 
 **Reading the results honestly**: the BTC side covers about one hour of streaming data while each stock figure is a full trading session, so the tiny volatility ratios reflect the time spans, not a real claim that BTC is calmer than tech stocks. The point here is the mechanics: cross-bucket, cross-pipeline, partition-pruned SQL with consistent metric definitions. Once both pipelines run on the same trading days, the same tables support a true same-session, date-matched comparison (BTC over 09:30–16:00 New York time vs. each stock's open-to-close return), drafted in the same `.sql` file.
 
 **A data-quality finding the join surfaced**: five tickers (INTC, AVGO, META, GOOGL, AMZN) have only 20 usable trading days against 27 for the others in the same date range, and 2026-07-10 has rows with null metrics. That's a batch-side gap to investigate, exactly the kind of issue that only becomes visible once the two pipelines' outputs are queried side by side.
+
+## Proof of Work: Grafana Pipeline Health Dashboard
+
+A live health dashboard for the streaming job, served by Grafana (in the same Docker Compose stack) and querying Streaming Gold through Athena. The data source, dashboard, and panel queries are all provisioned from version-controlled files in [`grafana/`](grafana/), and Grafana authenticates as a dedicated read-only IAM user (see [ADR-010](ADR.md#adr-010-why-a-self-hosted-grafana-provisioned-as-code-querying-athena-directly)).
+
+<!-- TODO: replace src with the GitHub upload link for the dashboard screenshot -->
+<img alt="grafana_pipeline_health" src="GRAFANA_DASHBOARD_SCREENSHOT_URL" />
+
+*15-minute view, 2026-10-28 18:07–18:21 (New York time). 138 windows written, median end-to-end latency 40.1 s.*
+
+What the dashboard shows:
+- **Median end-to-end latency of ~40 s**, the 30 s watermark plus the 10 s trigger interval. The cost of [ADR-004](ADR.md#adr-004-why-watermark--30-seconds)'s late-data policy, measured live rather than asserted.
+- **Startup catch-up**: right after launch (18:07), latency starts high and slopes down to the ~40 s band as Spark works through the events Kafka buffered while the job was off. That's Requirement 3 (continue after restarts without dropping data) visible on a chart.
+- **An ingestion gap, and event-time watermarks behaving as designed**: from about 18:11:45 to 18:13:45 no windows exist at all (the trades panel goes flat, and the VWAP lines draw a straight segment across the gap), meaning no trades reached Spark for ~2 minutes. The latency spike to ~3.3 min right before the gap is the consequence: an event-time watermark only advances when new events arrive, so the last window before the gap couldn't be finalized until data resumed. All the held-back windows were then written in one batch, which is why latency falls in a straight diagonal back to ~40 s. Nothing was dropped or double-counted; the output was simply delayed until the data justified closing the windows.
+- **Completeness**: windows per minute sits at 6 per symbol when healthy, so a dip immediately flags missing windows (a stall or an upstream gap).
+- **Correctness**: per-window VWAP plotted between that window's high and low for BTC-USD and ETH-USD.
+
+Every panel filters on the `dt` partition using the dashboard's time range, so each refresh reads only the day folders in view (see [ADR-009](ADR.md#adr-009-why-partition-gold-by-day-instead-of-by-window-timestamp)).

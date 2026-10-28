@@ -126,4 +126,27 @@ Partition projection fits a streaming writer specifically: new partitions appear
 
 ---
 
+## ADR-010: Why a self-hosted Grafana, provisioned as code, querying Athena directly?
+
+**Context**: The Analytics & Observability goals call for proof that the pipeline is healthy and its tradeoffs are measurable (not just diagrammed), using the Athena query layer that already serves the batch/streaming convergence.
+
+**Decision**: Grafana OSS (pinned to 11.3.0) runs as another service in the existing Docker Compose stack, with the official Athena data-source plugin querying `streaming_gold_trades` directly. The data source and the dashboard are **provisioned from version-controlled files** (`grafana/provisioning/`, `grafana/dashboards/crypto_pipeline_health.json`), not clicked together in the UI. Grafana authenticates as a **dedicated IAM user** (`grafana-athena-reader`) whose policy can only run Athena queries, read the Glue catalog, read `gold/`, and write its own query results under `athena-results/`.
+
+**Rationale**:
+- **Reuses the query layer instead of adding a metrics stack.** Every Gold row already carries `window_end` and `written_at`, so freshness, end-to-end latency, window completeness, and throughput are plain SQL over data the pipeline already produces. No Prometheus, exporters, or extra storage needed to get the core health signals.
+- **Dashboards as code.** A fresh `docker compose up` recreates the data source and dashboard identically on any machine. The dashboard is reviewable in git diffs, and no credentials are committed (provisioning files read keys from environment variables sourced from the gitignored `.env`).
+- **Least privilege, separate from the writer.** The Spark job's keys can write to the bucket; Grafana's can't. If the dashboard's credentials leaked, the blast radius is read access to Gold and write access to a scratch results prefix, not the ability to modify or delete pipeline data.
+- **Partition pruning carried into every panel.** Each panel query filters `dt` using the dashboard's time range (`$__rawTimeFrom('yyyy-MM-dd')`), so refreshes read only the day folders in view (see [ADR-009](#adr-009-why-partition-gold-by-day-instead-of-by-window-timestamp)).
+- **Alternatives considered**: Amazon Managed Grafana (same tool, but adds per-user licensing and IAM Identity Center setup for a single-developer project); QuickSight (built for business BI reporting, not operational time-series monitoring); CloudWatch dashboards (would require publishing custom metrics from the job first).
+
+**Observed result**: median end-to-end latency (window close → S3 write) of **~40 s**, which matches the design: the 30 s watermark (ADR-004) plus the 10 s trigger interval. ADR-004's latency cost is now a measured number, not a claim. The dashboard also made two less obvious behaviors visible: startup catch-up (latency sloping down to ~40 s as Spark works through the backlog Kafka buffered while the job was off, Requirement 3), and a ~2-minute ingestion gap during which the last window before the gap waited ~3.3 min to be written. Event-time watermarks only advance when new events arrive, so windows can't close during a gap in the input, which is the correct, designed behavior but is invisible without this kind of monitoring.
+
+**Tradeoff accepted**:
+- **Athena isn't a low-latency metrics store.** Each panel refresh is a full Athena query (seconds of latency, billed with a 10 MB minimum per query). At a 1-minute refresh with 8 panels that's roughly 2 cents an hour while the dashboard is open, which is fine for this project but the wrong pattern for second-by-second operational alerting.
+- **Only what reaches Gold is observable.** Watermark-dropped events and Kafka consumer lag never land in S3, so they can't be charted this way. Those require exporting Spark's `StreamingQueryProgress` metrics and Kafka consumer-group offsets to a metrics backend (e.g. Prometheus), and are deferred.
+- **Freshness is measured at the S3 sink, not upstream.** "Seconds since last Gold write" going red says the pipeline stalled somewhere, not where (producer, Kafka, or Spark).
+- **Static access keys in a local `.env`.** Acceptable for a local, single-developer setup; a deployed Grafana would use an assumed IAM role instead of long-lived keys.
+
+---
+
 Additional ADRs will be added here as further implementation decisions are actually made (e.g. the sink-writing strategy) — a decision isn't recorded until it's been made, rather than speculated on in advance.

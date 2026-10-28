@@ -1,0 +1,61 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AthenaRunQueries",
+      "Effect": "Allow",
+      "Action": [
+        "athena:StartQueryExecution",
+        "athena:StopQueryExecution",
+        "athena:GetQueryExecution",
+        "athena:GetQueryResults",
+        "athena:GetWorkGroup",
+        "athena:ListWorkGroups",
+        "athena:ListDataCatalogs",
+        "athena:GetDataCatalog",
+        "athena:ListDatabases",
+        "athena:GetDatabase",
+        "athena:ListTableMetadata",
+        "athena:GetTableMetadata"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "GlueCatalogReadOnly",
+      "Effect": "Allow",
+      "Action": [
+        "glue:GetDatabase",
+        "glue:GetDatabases",
+        "glue:GetTable",
+        "glue:GetTables",
+        "glue:GetPartition",
+        "glue:GetPartitions",
+        "glue:BatchGetPartition"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "ListCryptoBucket",
+      "Effect": "Allow",
+      "Action": ["s3:ListBucket", "s3:GetBucketLocation"],
+      "Resource": "arn:aws:s3:::hongskim-crypto-stream"
+    },
+    {
+      "Sid": "ReadGoldOnly",
+      "Effect": "Allow",
+      "Action": ["s3:GetObject"],
+      "Resource": "arn:aws:s3:::hongskim-crypto-stream/gold/*"
+    },
+    {
+      "Sid": "WriteAthenaResultsForGrafana",
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject",
+        "s3:PutObject",
+        "s3:AbortMultipartUpload",
+        "s3:ListMultipartUploadParts"
+      ],
+      "Resource": "arn:aws:s3:::hongskim-crypto-stream/athena-results/*"
+    }
+  ]
+}

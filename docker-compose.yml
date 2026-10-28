@@ -1,3 +1,4 @@
+version: "3.8"
 
 services:
   kafka:
@@ -39,5 +40,26 @@ services:
       "kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists
        --topic raw_trades --partitions 3 --replication-factor 1"
 
+  grafana:
+    image: grafana/grafana:11.3.0
+    container_name: grafana
+    ports:
+      - "3000:3000"       # dashboard UI at http://localhost:3000
+    environment:
+      GF_INSTALL_PLUGINS: grafana-athena-datasource
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      # Read-only Athena credentials for a dedicated IAM user (see
+      # grafana/iam/grafana-athena-reader-policy.json) -- deliberately NOT the
+      # Spark job's read/write keys. Values come from the project's .env file.
+      GRAFANA_AWS_ACCESS_KEY_ID: ${GRAFANA_AWS_ACCESS_KEY_ID}
+      GRAFANA_AWS_SECRET_ACCESS_KEY: ${GRAFANA_AWS_SECRET_ACCESS_KEY}
+      AWS_REGION: ${AWS_REGION:-us-east-2}
+      ATHENA_OUTPUT_LOCATION: ${ATHENA_OUTPUT_LOCATION}
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro   # data source + dashboard loader
+      - ./grafana/dashboards:/etc/grafana/dashboards:ro       # dashboard JSON, version-controlled
+      - grafana_data:/var/lib/grafana                         # plugins, users, UI state
+
 volumes:
   kafka_data:
+  grafana_data:

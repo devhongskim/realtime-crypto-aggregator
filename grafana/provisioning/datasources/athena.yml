@@ -1,0 +1,22 @@
+# Provisioned Athena data source -- created automatically when Grafana starts.
+# Values like $GRAFANA_AWS_ACCESS_KEY_ID are read from the container's
+# environment (set in docker-compose.yml from the project's .env file),
+# so no credentials are committed to the repo.
+apiVersion: 1
+
+datasources:
+  - name: Athena
+    type: grafana-athena-datasource
+    uid: athena
+    isDefault: true
+    editable: false
+    jsonData:
+      authType: keys
+      defaultRegion: $AWS_REGION
+      catalog: AwsDataCatalog
+      database: default
+      workgroup: primary
+      outputLocation: $ATHENA_OUTPUT_LOCATION
+    secureJsonData:
+      accessKey: $GRAFANA_AWS_ACCESS_KEY_ID
+      secretKey: $GRAFANA_AWS_SECRET_ACCESS_KEY

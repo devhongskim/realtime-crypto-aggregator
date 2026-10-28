@@ -73,6 +73,7 @@ ps_command = (
 subprocess.Popen(["start", "powershell", "-NoExit", "-Command", ps_command], shell=True)
 
 print("\n🎉 All systems launched!")
+print("📊 Grafana dashboard: http://localhost:3000 (Crypto Pipeline folder)")
 print("💡 Press Ctrl+C in this main window whenever you want to stop the producer and Docker.")
 print("💡 Reminder: If Spark fails to bind to 127.0.0.1, your network stack may still be settling after a fresh boot. Wait a moment and try again.")
 

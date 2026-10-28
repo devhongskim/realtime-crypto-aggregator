@@ -1,0 +1,12 @@
+# Loads every dashboard JSON file in /etc/grafana/dashboards (mounted from
+# ./grafana/dashboards) into a "Crypto Pipeline" folder on startup.
+apiVersion: 1
+
+providers:
+  - name: crypto-pipeline
+    folder: Crypto Pipeline
+    type: file
+    disableDeletion: false
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/dashboards
