@@ -288,10 +288,7 @@ BTC-USD (streaming): **+0.07% return, 0.21% volatility** across 42 windows from 
 ## Proof of Work: Grafana Pipeline Health Dashboard
 
 A live health dashboard for the streaming job, served by Grafana (in the same Docker Compose stack) and querying Streaming Gold through Athena. The data source, dashboard, and panel queries are all provisioned from version-controlled files in [`grafana/`](grafana/), and Grafana authenticates as a dedicated read-only IAM user (see [ADR-010](ADR.md#adr-010-why-a-self-hosted-grafana-provisioned-as-code-querying-athena-directly)).
-
-<!-- TODO: replace src with the GitHub upload link for the dashboard screenshot -->
-<img alt="grafana_pipeline_health" src="GRAFANA_DASHBOARD_SCREENSHOT_URL" />
-
+<img width="2527" height="1236" alt="grafana_run" src="https://github.com/user-attachments/assets/3b16220e-37c6-4684-b6a8-324891312b36" />
 *15-minute view, 2026-10-28 18:07–18:21 (New York time). 138 windows written, median end-to-end latency 40.1 s.*
 
 What the dashboard shows:
