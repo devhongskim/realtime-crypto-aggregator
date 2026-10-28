@@ -106,4 +106,24 @@ Spark does technically offer a Continuous Processing mode as a lower-latency alt
 
 ---
 
+## ADR-009: Why partition Gold by day instead of by window timestamp?
+
+**Context**: Requirement 6 (queryable downstream format), and specifically making Streaming Gold work with Athena. The first layout partitioned Gold by each 10-second window's start time (`window_folder=2026-08-16 22:25:50/symbol=BTC-USD/`). Two problems surfaced once real data landed in S3:
+- **URL-escaped partition paths**: Spark escapes `:` when building partition directories, so the physical paths became `window_folder=2026-08-16 22%3A25%3A50/`. Athena couldn't map those back to a `TIMESTAMP` partition, and an `injected` partition projection only works with an exact, escaped-string equality filter on every query, so range filters like `window_start >= TIMESTAMP '...'` were impossible. Workarounds piled up: a flat table, plus a view that regex-extracted the timestamp from `"$path"` and un-escaped `%3A` by hand.
+- **Partition granularity**: one partition per 10-second window means 8,640 partitions per symbol per day (17,280/day for two symbols), each holding a single row. Even with a colon-free format, that layout maximizes S3 listing and partition-metadata overhead while giving almost no pruning benefit, since nobody queries a single 10-second window.
+
+**Decision**: Partition Gold by `dt` (the window's UTC date, `yyyy-MM-dd`) and `symbol`, producing `gold/trades/dt=2026-10-28/symbol=BTC-USD/`. `window_start` and `window_end` stay in the Parquet data as regular `TIMESTAMP` columns. Partitions are registered with **Athena partition projection** (`dt` as a date range, `symbol` as an enum) instead of `MSCK REPAIR TABLE` or a Glue crawler, and the Spark session is pinned to UTC.
+
+**Rationale**: Partition granularity should follow the query pattern, not the window size. Queries here look at a day (or range of days) for a symbol, so `dt` + `symbol` prunes to exactly the folders a query needs, and `window_start` then filters precisely within them. Measured on the first day of data: **4.62 KB scanned without partition filters → 2.15 KB with them (−53%)**. That early saving comes entirely from skipping the other symbol, and it grows with every additional day of history.
+
+Partition projection fits a streaming writer specifically: new partitions appear continuously, and `MSCK REPAIR TABLE` would have to be re-run every time one does, listing the entire prefix each run (slower as history grows). A Glue crawler adds cost and schedule lag. Projection computes partition locations from table properties at query time, so data is queryable the moment Spark commits it, with zero partition maintenance. UTC avoids daylight-saving gaps/overlaps and keeps `dt` independent of the machine the job happens to run on.
+
+**Tradeoff accepted**:
+- **Pruning requires an explicit `dt` filter**. Athena doesn't derive `dt` from a `window_start` predicate, so a query filtering only on `window_start` scans every day. Queries need both predicates. Because `dt` is in UTC, evening trades in US time zones land in the next day's partition.
+- **Projection config must stay in sync with the job**. Adding a symbol to `ALLOWED_SYMBOLS` without also updating `projection.symbol.values` makes the new symbol silently invisible to Athena: no error, just missing rows.
+- **Small files remain**. Each 10-second micro-batch still writes a new small Parquet file per partition (hundreds per symbol per day). Daily partitions make this manageable, and a compaction job per `dt` is the at-scale fix, not yet built.
+- **Data written under the old layout isn't queryable by this table**. It was moved to `gold/trades_legacy/` and is out of scope for now (a Glue crawler over that prefix is a possible later exploration).
+
+---
+
 Additional ADRs will be added here as further implementation decisions are actually made (e.g. the sink-writing strategy) — a decision isn't recorded until it's been made, rather than speculated on in advance.

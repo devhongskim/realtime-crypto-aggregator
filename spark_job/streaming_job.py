@@ -80,6 +80,9 @@ def build_spark_session() -> SparkSession:
         .config("spark.hadoop.fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem")
         .config("spark.hadoop.fs.s3a.aws.credentials.provider", "org.apache.hadoop.fs.s3a.SimpleAWSCredentialsProvider")
         .config("spark.sql.shuffle.partitions", "4")
+        # Pin the session to UTC so the dt partition is derived consistently
+        # regardless of the machine's local timezone.
+        .config("spark.sql.session.timeZone", "UTC")
         .getOrCreate()
     )
 
@@ -174,7 +177,9 @@ def compute_windowed_gold(df):
         )
         .select(
             col("window.start").alias("window_start"),
-            date_format(col("window.start"), "yyyy-MM-dd HH:mm:ss").alias("window_folder"),
+            # Partition key: a colon-free, Athena-friendly date string. The full
+            # window_start TIMESTAMP stays in the Parquet data as a regular column.
+            date_format(col("window.start"), "yyyy-MM-dd").alias("dt"),
             col("window.end").alias("window_end"),
             col("symbol"),
             col("vwap"),
@@ -192,12 +197,13 @@ def write_batch_to_gold_s3(batch_df, batch_id: int) -> None:
     foreachBatch sink -- lets Spark's own DataFrameWriter own the commit
     (rather than hand-rolled file I/O), sidestepping the S3 commit-protocol
     edge cases noted in the README's Implementation Notes. Hive-style
-    partitioning by window_folder/symbol makes this directly Athena-friendly.
+    partitioning by dt/symbol (e.g. dt=2026-08-16/symbol=BTC-USD/) makes this
+    directly Athena-friendly -- no URL-escaped characters in partition paths.
     """
     (
         batch_df.write
         .mode("append")
-        .partitionBy("window_folder", "symbol")
+        .partitionBy("dt", "symbol")
         .parquet(S3_GOLD_PATH)
     )
 
