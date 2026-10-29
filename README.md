@@ -211,7 +211,7 @@ Adjust the `--packages` versions to match your installed Spark/Hadoop if they di
 
 ## 📦 How to Run (Phase 3 — Analytics)
 
-1. In the Athena query editor, run each `CREATE EXTERNAL TABLE` statement in `athena/create_tables.sql` separately (replace `YOUR_BUCKET_NAME` first, since it appears in both `LOCATION`s and the gold table's `storage.location.template`).
+1. In the Athena query editor, run each `CREATE EXTERNAL TABLE` statement in `docs/athena/create_tables.sql` separately (replace `YOUR_BUCKET_NAME` first, since it appears in both `LOCATION`s and the gold table's `storage.location.template`).
 2. No partition registration step is needed: `streaming_gold_trades` uses partition projection, so new `dt=`/`symbol=` partitions are queryable as soon as Spark writes them (no `MSCK REPAIR TABLE`). Always filter on `dt` (UTC date) to get pruning:
    ```sql
    SELECT * FROM streaming_gold_trades WHERE dt = '2026-10-28' AND symbol = 'BTC-USD' LIMIT 10;
@@ -288,7 +288,7 @@ The two datasets don't share dates yet (batch history covers Jul 1 – Aug 7, 20
 - **Batch side**: daily metrics averaged per ticker across 20–27 trading days
 - **`CROSS JOIN`**: attaches the single BTC summary row to every ticker. There is no shared key, by design.
 
-Full query: [`athena/batch_streaming_join.sql`](athena/batch_streaming_join.sql)
+Full query: [`docs/athena/batch_streaming_join.sql`](docs/athena/batch_streaming_join.sql)
 <img width="2431" height="1072" alt="crypto_and_stock_join" src="https://github.com/user-attachments/assets/4555594a-0ecc-4852-b874-185e9fe917d1" />
 
 

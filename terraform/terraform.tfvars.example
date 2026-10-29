@@ -1,0 +1,3 @@
+# Copy to terraform.tfvars (gitignored) and set a globally unique bucket name:
+#   cp terraform.tfvars.example terraform.tfvars
+bucket_name = "your-unique-bucket-name"
