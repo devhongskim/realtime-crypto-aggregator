@@ -1,8 +1,20 @@
 # Validation Plan
 
-This document lays out specific operational scenarios that will be executed manually once the pipeline is implemented, to confirm it actually satisfies the [requirements](../README.md#requirements) it was designed against — rather than assuming correctness from the architecture alone.
+This document lays out specific operational scenarios for confirming the pipeline actually satisfies the [requirements](../README.md#requirements) it was designed against — rather than assuming correctness from the architecture alone.
 
-**Status: not yet executed.** This is a plan, not a report — each scenario below will be updated with actual observed results (including anything that *doesn't* work as expected) once the corresponding component exists and has been run for real.
+**Status (2026-10-28): partially executed.**
+
+| Scenario | Status | How |
+|---|---|---|
+| 1 — Restart resumes cleanly | Partially observed | Startup catch-up visible on the Grafana dashboard; duplicate-window check not yet run |
+| 2 — Late event within watermark included | ✅ Automated | Streaming test in CI |
+| 3 — Late event beyond watermark dropped | ✅ Automated | Streaming test in CI |
+| 4 — Per-symbol ordering preserved | Open | Not yet executed |
+| 5 — Duplicate trades filtered | ✅ Automated | Streaming test in CI (injected duplicates) |
+| 6 — Silver is deterministic / recomputable | Partially covered | Validation unit-tested as a stateless function; twice-run comparison not yet done |
+| 7 — End-to-end latency | ✅ Measured | Grafana dashboard over live data |
+
+Results below include anything that *didn't* match the original expectation.
 
 ---
 
@@ -35,7 +47,7 @@ This document lays out specific operational scenarios that will be executed manu
 
 **Expected outcome**: Included — 15 seconds is within the 30-second watermark threshold, so the window shouldn't have been finalized yet when the event arrives.
 
-**Actual result**: *(to be filled in once executed)*
+**Actual result**: ✅ **Automated, passing in CI.** `tests/test_streaming_job.py::`test_streaming_watermark_drops_late_events_and_keeps_in_bound_ones`` runs the job's real `validate_and_dedupe` → `compute_windowed_gold` as a Structured Streaming query. After the watermark reaches 00:00:15, a trade stamped 00:00:16 arrives in a later micro-batch and is counted in the 00:00:10 window (trade_count 2, not 1).
 
 ---
 
@@ -48,7 +60,7 @@ This document lays out specific operational scenarios that will be executed manu
 
 **Expected outcome**: The late event should not appear in the finalized aggregate output after the watermark threshold has passed — its trade shouldn't be reflected in that window's count, volume, or price metrics in S3.
 
-**Actual result**: *(to be filled in once executed)*
+**Actual result**: ✅ **Automated, passing in CI** (same test as Scenario 2). With the watermark at 00:00:15, a trade stamped 00:00:05 arriving afterwards is not reflected in the 00:00:00 window (trade_count stays 1). Re-running the test with a deliberately wrong 60 s watermark makes it fail, confirming the test genuinely enforces the 30 s bound.
 
 ---
 
@@ -77,7 +89,7 @@ This document lays out specific operational scenarios that will be executed manu
 
 **Expected outcome**: The duplicate is dropped before windowing — trade count and volume in the affected window reflect the unique trade only once, not twice.
 
-**Actual result**: *(to be filled in once executed)*
+**Actual result**: ✅ **Automated, passing in CI** (same test as Scenario 2). A duplicate `trade_id` in the same micro-batch, and a replay of an earlier trade in a later micro-batch, are each counted once. Caveat: duplicates are injected directly into the streaming query rather than produced by a real WebSocket reconnect, so this verifies the dedup logic, not Coinbase's actual redelivery behaviour.
 
 ---
 
@@ -92,13 +104,13 @@ This document lays out specific operational scenarios that will be executed manu
 
 **Expected outcome**: Identical results both times — same records kept, same records rejected, same duplicates removed. Confirms the recomputability assumption ADR-008 is actually built on, rather than leaving it as an untested claim.
 
-**Actual result**: *(to be filled in once executed)*
+**Actual result**: **Partially covered.** Validation is now its own stateless function (`validate_trades`), unit-tested to keep exactly the well-formed, allow-listed rows from a fixed input including malformed and null events, so the same input always yields the same kept/rejected set. Not yet done: the literal twice-run comparison over a captured Bronze slice including deduplication.
 
 ---
 
 ## Scenario 7 — End-to-end latency measurement
 
-**Validates**: The project's "real-time" framing, and the end-to-end lag metric promised in the [Analytics & Observability](../README.md#analytics--observability-planned) Grafana panels — without this, "real-time" is just an unmeasured claim.
+**Validates**: The project's "real-time" framing, and the end-to-end lag metric promised in the [Analytics & Observability](../README.md#analytics--observability) Grafana panels — without this, "real-time" is just an unmeasured claim.
 
 **Steps**:
 1. For a sample of trade events, capture four timestamps: the event's own trade timestamp (from Coinbase), the time it lands in Kafka, the time Spark processes it, and the time its window is written to S3.
@@ -107,4 +119,6 @@ This document lays out specific operational scenarios that will be executed manu
 
 **Expected outcome**: A concrete, reproducible latency number (e.g. "typically N seconds end-to-end"), not just an assumption that the system is fast. Given the 10-second window and 30-second watermark, latency in roughly the same range (single-digit to low double-digit seconds) would be a reasonable outcome; a much larger number would indicate a bottleneck worth investigating rather than a "real-time" system.
 
-**Actual result**: *(to be filled in once executed)*
+**Actual result**: ✅ **Measured on live data**, Grafana dashboard, 2026-10-28 18:07–18:21 New York time (138 windows): **median 40.1 s** from window close (`window_end`) to S3 write (`written_at`). For an individual trade, add its position within the 10 s window, so roughly **40–50 s from trade to S3**.
+
+This is higher than the original expectation above (single-digit to low double-digit seconds), and the expectation was the mistake, not the pipeline: in append mode a window can't be written until the watermark passes its end, so the 30 s watermark sets a floor of ~30 s, plus up to 10 s for the next trigger. ~40 s is the designed behaviour (ADR-004's completeness-over-latency tradeoff). Lowering it means shortening the watermark and accepting more dropped late events. Two non-steady-state cases were also observed: startup catch-up (latency sloping down to ~40 s after launch) and a ~2-minute ingestion gap during which the last window before the gap waited ~3.3 min, because event-time watermarks only advance when new events arrive. Not yet done: comparing latency under quiet vs. high-volume periods.

@@ -1,11 +1,13 @@
 # Real-Time Crypto Trade Aggregator
 
+[![CI](https://github.com/devhongskim/realtime-crypto-aggregator/actions/workflows/ci.yml/badge.svg)](https://github.com/devhongskim/realtime-crypto-aggregator/actions/workflows/ci.yml)
+
 A streaming data pipeline that ingests live cryptocurrency trade data, computes rolling windowed analytics, and writes queryable output to a data lake — the streaming counterpart to [stock-data-pipeline](https://github.com/devhongskim/stock-data-pipeline), which covers the batch side of the same underlying problem.
 
 ## 📚 Additional Documentation
 
 - **[ADR.md](ADR.md)** — Architecture Decision Records documenting the reasoning and tradeoffs behind every major technology choice in this project.
-- **[docs/validation.md](docs/validation.md)** — Planned validation scenarios for confirming the pipeline actually meets its requirements (restart-safety, watermark behavior, ordering) once built.
+- **[docs/validation.md](docs/validation.md)** — Validation scenarios for confirming the pipeline actually meets its requirements (restart-safety, watermark behavior, dedup, ordering, latency), with results: which are covered by automated tests, which were observed on the live dashboard, and which are still open.
 
 ## Why this project exists
 [stock-data-pipeline](https://github.com/devhongskim/stock-data-pipeline) processes one clean, complete daily snapshot, with the luxury of retries and full reprocessing whenever needed. This project answers the opposite problem: data never stops arriving, there's no "end of batch" to wait for, and a late or out-of-order event has to be handled *while the stream keeps moving*. Windowed aggregation, watermarking, and restart-safe checkpointing are the concepts this project exists to demonstrate — the deliberate other half of a complete data engineering skill set.
@@ -122,10 +124,28 @@ No API key, no auth required for most channels — genuinely live trade data for
 | **Storage** | AWS S3 (Parquet, Hive-partitioned) |
 | **Query Layer** | AWS Athena (partition projection) |
 | **Observability** | Grafana 11.3 (Athena data source, provisioned as code) |
+| **Testing / CI** | pytest, GitHub Actions (Python 3.11, Java 17) |
 
 ## Scaling Considerations
 - **Current**: single/small symbol set, `local[*]` Spark, single Kafka broker — appropriate for portfolio scale.
 - **At scale**: multiple Kafka partitions per symbol for parallelism; a real Spark cluster (EMR/Databricks) instead of local mode; Kafka Connect or a managed sink instead of hand-rolled `foreachBatch` writes; an S3-aware committer (Hadoop S3A committers) or a table format like Delta Lake/Iceberg instead of `FileOutputCommitter`'s copy-based commits; a daily compaction job to merge each `dt=` partition's many small micro-batch files.
+
+## 🧪 Tests & CI
+
+12 automated tests run on every push and pull request via GitHub Actions ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)). No Kafka, AWS, or network access is needed: Spark runs in local mode and the producer is tested against a fake Kafka client.
+
+- **Spark transformations** (`tests/test_streaming_job.py`): Kafka payload parsing (string prices, microsecond `Z` timestamps), malformed messages becoming nulls that validation removes instead of crashing the job, every validation rule, VWAP/volume/high/low math, 10-second window boundaries, and the UTC `dt` partition rolling over at midnight.
+- **End-to-end streaming behaviour**: one test runs the job's real validation and windowing code as a Structured Streaming query over five micro-batches, verifying that a trade arriving after the 30 s watermark is **dropped**, a late trade still within the watermark is **counted**, duplicate `trade_id`s are counted **once** (within and across batches), and windows still within the watermark are **not emitted early** ([ADR-004](ADR.md#adr-004-why-watermark--30-seconds)). Checked against a deliberately wrong 60 s watermark, which makes the test fail.
+- **Producer** (`tests/test_coinbase_producer.py`): trade extraction from Coinbase messages, symbol-keyed Kafka envelopes (per-symbol ordering, [ADR-001](ADR.md#adr-001-why-kafka-instead-of-redis-streams)), and Kafka errors being logged rather than crashing the producer.
+
+Run locally (**requires Python 3.11**: PySpark 3.5 does not support Python 3.13+, and a Java 17 runtime):
+
+```bash
+py -3.11 -m venv venv            # Windows; use python3.11 on macOS/Linux
+venv\Scripts\activate             # source venv/bin/activate on macOS/Linux
+pip install -r requirements-dev.txt
+pytest -v
+```
 
 ## 📦 How to Run (Phase 0 — Provision Infrastructure)
 
@@ -250,8 +270,8 @@ This project isn't a crypto-trading analysis tool — the trade data is a realis
 - [ ] Grafana: watermark-dropped events and Kafka consumer lag (requires exporting Spark/Kafka metrics, e.g. Prometheus)
 
 ### Phase 4 — Production Hardening
-- [ ] Automated tests
-- [ ] CI pipeline
+- [x] Automated tests: 12 pytest tests, including an end-to-end Structured Streaming test of the watermark and dedup
+- [x] CI pipeline: GitHub Actions runs the suite on every push and pull request
 
 ## Proof of Work: Athena Partition Pruning
 
