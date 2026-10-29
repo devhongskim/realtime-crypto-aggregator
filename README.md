@@ -4,6 +4,19 @@
 
 A streaming data pipeline that ingests live cryptocurrency trade data, computes rolling windowed analytics, and writes queryable output to a data lake — the streaming counterpart to [stock-data-pipeline](https://github.com/devhongskim/stock-data-pipeline), which covers the batch side of the same underlying problem.
 
+## ⚡ At a glance
+
+- **What it does**: streams live BTC-USD / ETH-USD trades from Coinbase through Kafka into Spark Structured Streaming, computes 10-second VWAP / volume / high / low windows on **event time** with a **30 s watermark**, and lands them in S3 as Hive-partitioned Parquet, queried with **Athena** and monitored in **Grafana**.
+- **Stack**: Python · Kafka (KRaft, Docker Compose) · PySpark Structured Streaming · AWS S3 · Athena · Grafana · Terraform · pytest · GitHub Actions
+- **Measured results**:
+  - **~40 s median end-to-end latency** (window close → S3), measured live: exactly the 30 s watermark + 10 s trigger the design predicts ([Grafana proof](#proof-of-work-grafana-pipeline-health-dashboard))
+  - **−53% data scanned** from partition pruning on `dt` / `symbol` ([Athena proof](#proof-of-work-athena-partition-pruning))
+  - **One Athena query joining two independent pipelines** in two S3 buckets: this one and the batch [stock-data-pipeline](https://github.com/devhongskim/stock-data-pipeline) ([join proof](#proof-of-work-batch--streaming-join-in-one-athena-query))
+  - **12 automated tests in CI**, including an end-to-end streaming test that proves late events beyond the watermark are dropped and duplicates are counted once ([Tests & CI](#-tests--ci))
+- **Why it's built this way**: 10 [Architecture Decision Records](ADR.md), each with alternatives considered and tradeoffs accepted
+
+<img width="2527" height="1236" alt="grafana_pipeline_health" src="https://github.com/user-attachments/assets/3b16220e-37c6-4684-b6a8-324891312b36" />
+
 ## 📚 Additional Documentation
 
 - **[ADR.md](ADR.md)** — Architecture Decision Records documenting the reasoning and tradeoffs behind every major technology choice in this project.
@@ -41,46 +54,26 @@ S3 (bronze/trades/, gold/trades/) → Athena → Grafana (pipeline observability
 
 Two independently-built pipelines — one batch, one streaming — each with its own dedicated S3 bucket, converging on a shared query layer (Athena) and a shared BI layer (Grafana). This is a realistic "lakehouse" pattern: Athena can query and join tables across separate S3 buckets without issue, so convergence happens at the catalog/query layer, not by forcing both pipelines into shared storage -- which mirrors how most real organizations actually separate storage by domain/team while unifying access at the query layer.
 
-```
-                    Batch Side
-Polygon API
-     │
-     ▼
-Bronze (S3)
-     │
-     ▼
-Silver (DuckDB + S3)
-     │
-     ▼
-Gold (DuckDB + S3)
-     │
-     ▼
-Athena ──────────────┐
-                      │
-                Streaming Side          │
-Coinbase WS                             │
-     │                                  │
-     ▼                                  │
-Kafka                                   │
-     │                                  │
-     ▼                                  │
-Spark Structured Streaming              │
-     │                                  │
-     ▼                                  │
-Streaming Bronze (S3)                   │
-     │                                  │
-     ▼                                  │
-[validate + dedupe — logical step,       │
- not materialized separately, see ADR-008]│
-     │                                  │
-     ▼                                  │
-Streaming Gold (windowed metrics)       │
-     │                                  │
-     ▼                                  │
-Athena ──────────────────────────────────┘
-                      │
-                      ▼
-                  Grafana
+```mermaid
+flowchart TB
+    subgraph batch["Batch side: stock-data-pipeline (daily, Airflow)"]
+        P["Polygon.io API"] --> BB["Bronze: raw JSON (S3)"]
+        BB --> BS["Silver: DuckDB + Parquet (S3)"]
+        BS --> BG["Gold: daily metrics, Parquet (S3)"]
+    end
+
+    subgraph stream["Streaming side: this project (continuous)"]
+        C["Coinbase WebSocket"] --> PR["Python producer"]
+        PR --> K["Kafka: raw_trades, keyed by symbol"]
+        K --> SP["Spark Structured Streaming"]
+        SP --> SB["Streaming Bronze: raw events, Parquet (S3)"]
+        SP --> V["Validate + dedupe (in-memory, ADR-008)"]
+        V --> SG["Streaming Gold: 10 s windows, dt/symbol partitions (S3)"]
+    end
+
+    BG --> A["Athena: shared query layer"]
+    SG --> A
+    A --> G["Grafana: pipeline health dashboard"]
 ```
 
 **Streaming Bronze** — raw trade events landed in S3 via Kafka, which durably buffers events between ingestion and persistence (mirrors the batch project's Bronze: immutable once written, minimally transformed).
@@ -106,7 +99,7 @@ No API key, no auth required for most channels — genuinely live trade data for
 
 **5. Sink** — a dedicated S3 bucket for this project (`hongskim-crypto-stream`, provisioned via Terraform -- see below), separate from the batch project's bucket. Convergence between the two pipelines happens at the query layer (Athena, which can join tables across different S3 buckets without issue), not at the storage layer -- this keeps blast radius isolated per project and mirrors how most organizations actually separate storage by domain/team, unifying only at the catalog/query layer. Paths: `bronze/trades/` (raw events) and `gold/trades/dt=<yyyy-MM-dd>/symbol=<symbol>/` (windowed aggregates, Hive-partitioned by UTC date and symbol, see [ADR-009](ADR.md#adr-009-why-partition-gold-by-day-instead-of-by-window-timestamp)).
 
-## ⚠️ Implementation Notes (heads-up for later)
+## ⚠️ Implementation Notes
 
 - **Coinbase subscription payload**: Unlike the deprecated legacy feed, the Advanced Trade WebSocket requires an explicit JSON `subscribe` message specifying `product_ids` (e.g. `["BTC-USD", "ETH-USD"]`) and `channel: "market_trades"` after the connection opens — trades won't start flowing just by connecting. Confirm the exact current message schema against Coinbase's live docs when writing the producer, since API details can shift independently of this README.
 - **PySpark's Kafka connector isn't bundled by default**: `SparkSession` needs the `spark-sql-kafka-0-10` package passed explicitly at startup (e.g. via `.config("spark.jars.packages", "org.apache.spark:spark-sql-kafka-0-10_2.12:<version>")`, matched to the installed Spark/Scala version) — omitting this produces a `ClassNotFoundException` at runtime, not at job submission, which can be a confusing first debugging session if it isn't expected.

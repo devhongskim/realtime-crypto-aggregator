@@ -56,7 +56,7 @@ Spark does technically offer a Continuous Processing mode as a lower-latency alt
 
 ## ADR-005: Why Parquet instead of JSON?
 
-**Context**: Requirement 6 (queryable downstream format) and the planned Athena integration.
+**Context**: Requirement 6 (queryable downstream format) and the Athena query layer.
 
 **Decision**: Parquet.
 
@@ -149,4 +149,4 @@ Partition projection fits a streaming writer specifically: new partitions appear
 
 ---
 
-Additional ADRs will be added here as further implementation decisions are actually made (e.g. the sink-writing strategy) — a decision isn't recorded until it's been made, rather than speculated on in advance.
+New ADRs are added as further implementation decisions are actually made — a decision isn't recorded until it's been made, rather than speculated on in advance.
